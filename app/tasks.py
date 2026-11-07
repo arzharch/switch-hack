@@ -1,7 +1,7 @@
-"""
-Mocked stand-in for a real ticket tracker (Jira/Linear) and a real org-chart /
+"""Mocked stand-in for a real ticket tracker (Jira/Linear) and a real org-chart /
 CODEOWNERS lookup. Everything in this file is the part of the demo that's
-faked -- swap it for real API calls later without touching blocker_resolver.py.
+faked -- swap it for real API calls later without touching blocker_resolver.py
+or tools.py, since both only ever call get_task()/owner_for() by name.
 """
 
 from dataclasses import dataclass, field
@@ -21,7 +21,6 @@ class Task:
     title: str
     assignee: str
     component: str          # which part of the system the blocker belongs to
-    blocker: str             # what's actually blocking it, in plain English
     room_id: str
     status: TaskStatus = TaskStatus.OPEN
     blocked_on: str | None = None   # owner handle currently paged
@@ -29,8 +28,8 @@ class Task:
 
 
 # component -> the one person who actually owns unblocking it.
-# This is the part that proves routing isn't hardcoded: two different
-# blockers resolve to two different people automatically.
+# "legacy-report-export" is deliberately absent, to prove the agent handles a
+# missing owner instead of inventing a name.
 OWNER_MAP: dict[str, str] = {
     "infra-access": "alice",
     "design-review": "priya",
@@ -43,7 +42,6 @@ TASKS: dict[str, Task] = {
         title="Fix payment webhook retry bug",
         assignee="you",
         component="infra-access",
-        blocker="needs staging infra access to reproduce the webhook retries",
         room_id="eng-room",
     ),
     "T-102": Task(
@@ -51,7 +49,6 @@ TASKS: dict[str, Task] = {
         title="Add CSV export to reports page",
         assignee="you",
         component="design-review",
-        blocker="needs sign-off on the export column layout before shipping",
         room_id="eng-room",
     ),
     "T-103": Task(
@@ -59,7 +56,20 @@ TASKS: dict[str, Task] = {
         title="Migrate user table index",
         assignee="you",
         component="db-admin",
-        blocker="needs a production migration window approved",
+        room_id="eng-room",
+    ),
+    "T-104": Task(
+        id="T-104",
+        title="Rotate log retention to 30 days",
+        assignee="you",
+        component="logging-pipeline",
+        room_id="eng-room",
+    ),
+    "T-105": Task(
+        id="T-105",
+        title="Re-enable legacy CSV report export",
+        assignee="you",
+        component="legacy-report-export",
         room_id="eng-room",
     ),
 }
@@ -71,11 +81,18 @@ def get_task(task_id: str) -> Task:
     return TASKS[task_id]
 
 
-def owner_for(component: str) -> str:
-    if component not in OWNER_MAP:
-        raise KeyError(f"no owner mapped for component: {component}")
-    return OWNER_MAP[component]
+def owner_for(component: str) -> str | None:
+    return OWNER_MAP.get(component)
 
 
 def list_tasks() -> list[Task]:
     return list(TASKS.values())
+
+
+def reset() -> None:
+    """Restores all seed tasks to OPEN. Used by the eval script so scenarios
+    don't leak state into each other between runs."""
+    for task in TASKS.values():
+        task.status = TaskStatus.OPEN
+        task.blocked_on = None
+        task.log.clear()
